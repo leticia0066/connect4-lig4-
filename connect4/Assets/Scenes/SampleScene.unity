@@ -3991,6 +3991,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ab4c34175a86be94d8a902996322d210, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  serverIP: 10.57.1.92
+  port: 7777
+  isHost: 1
   isConnected: 0
   opponentConnected: 0
   gameStarted: 0
