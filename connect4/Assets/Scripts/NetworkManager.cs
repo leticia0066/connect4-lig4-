@@ -7,6 +7,12 @@ public class NetworkManager : MonoBehaviour
 {
     public static NetworkManager Instance;
 
+    [Header("Config")]
+    public string serverIP = "127.0.0.1";
+    public int port = 7777;
+
+    public bool isHost = false;
+
     public bool isConnected = false;
     public bool opponentConnected = false;
     public bool gameStarted = false;
@@ -23,16 +29,18 @@ public class NetworkManager : MonoBehaviour
 
     void Start()
     {
-        ConnectToServer("127.0.0.1", 7777);
+        Connect();
     }
 
-    void ConnectToServer(string ip, int port)
+    public void Connect()
     {
         client = new TcpClient();
 
         try
         {
-            client.Connect(ip, port);
+            Debug.Log("[Rede] Tentando conectar em " + serverIP + ":" + port);
+
+            client.Connect(serverIP, port);
 
             NetworkStream stream = client.GetStream();
             reader = new StreamReader(stream);
@@ -41,15 +49,15 @@ public class NetworkManager : MonoBehaviour
 
             isConnected = true;
 
-            Debug.Log("[Rede] Conectado ao servidor");
+            Debug.Log("[Rede] Conectado com sucesso!");
 
             receiveThread = new Thread(ReceiveLoop);
             receiveThread.IsBackground = true;
             receiveThread.Start();
         }
-        catch
+        catch (System.Exception e)
         {
-            Debug.LogError("[Rede] Falha ao conectar");
+            Debug.LogError("[Rede] Falha ao conectar: " + e.Message);
         }
     }
 
@@ -70,19 +78,18 @@ public class NetworkManager : MonoBehaviour
                 if (msg == "START_GAME")
                 {
                     gameStarted = true;
-                    Debug.Log("[Rede] Jogo iniciado!");
+                    Debug.Log("[Rede] JOGO INICIADO!");
                 }
 
                 if (msg.StartsWith("MOVE:"))
                 {
                     int col = int.Parse(msg.Split(':')[1]);
-
                     Connect4Manager.Instance?.ApplyOpponentMove(col);
                 }
             }
             catch
             {
-                Debug.LogWarning("[Rede] Erro na recepção");
+                Debug.LogWarning("[Rede] Erro no ReceiveLoop");
             }
         }
     }
@@ -91,7 +98,7 @@ public class NetworkManager : MonoBehaviour
     {
         if (!isConnected || !opponentConnected || !gameStarted)
         {
-            Debug.LogWarning("[Rede] Não enviado: jogo ainda não pronto.");
+            Debug.LogWarning("[Rede] Jogada bloqueada (jogo não pronto)");
             return;
         }
 
