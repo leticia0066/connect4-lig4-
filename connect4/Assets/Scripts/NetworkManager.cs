@@ -1,177 +1,112 @@
-using System;
-using System.IO;
-using System.Net;
-using System.Net.Sockets;
-using System.Threading;
 using UnityEngine;
+using System.Net.Sockets;
+using System.IO;
+using System.Threading;
 
 public class NetworkManager : MonoBehaviour
 {
     public static NetworkManager Instance;
 
-    [Header("Configurações de Conexão")]
-    public string ipAddress = "127.0.0.1";
-    public int port = 25000;
-    public bool isServer = true;
+    public bool isConnected = false;
+    public bool opponentConnected = false;
+    public bool gameStarted = false;
 
-    private TcpListener server;
     private TcpClient client;
-    private NetworkStream stream;
+    private StreamReader reader;
+    private StreamWriter writer;
     private Thread receiveThread;
-    private Thread listenThread;
-    
-    private int receivedColumn = -1;
-    private Connect4Manager gameManager;
 
     void Awake()
     {
-        if (Instance == null) Instance = this;
-        else Destroy(gameObject);
+        Instance = this;
     }
 
     void Start()
     {
-        gameManager = FindObjectOfType<Connect4Manager>();
-        
-        if (isServer)
-            StartServer();
-        else
-            StartClient();
+        ConnectToServer("127.0.0.1", 7777);
     }
 
-    #region Servidor / Cliente Setup
-    void StartServer()
+    void ConnectToServer(string ip, int port)
     {
+        client = new TcpClient();
+
         try
         {
-            server = new TcpListener(IPAddress.Parse(ipAddress), port);
-            server.Start();
-            Debug.Log($"[Servidor] Aguardando conexão na porta {port}...");
-            
-            listenThread = new Thread(() => {
-                try
-                {
-                    client = server.AcceptTcpClient();
-                    stream = client.GetStream();
-                    Debug.Log("[Servidor] Cliente conectado!");
-                    
-                    receiveThread = new Thread(ReceiveData);
-                    receiveThread.Start();
-                }
-                catch (Exception)
-                {
-                    // Ignora exceção ao fechar o servidor enquanto espera conexão
-                }
-            });
-            listenThread.Start();
-        }
-        catch (Exception e)
-        {
-            Debug.LogError("[Servidor] Erro: " + e.Message);
-        }
-    }
+            client.Connect(ip, port);
 
-    void StartClient()
-    {
-        try
-        {
-            client = new TcpClient();
-            client.Connect(ipAddress, port);
-            stream = client.GetStream();
-            Debug.Log("[Cliente] Conectado ao servidor!");
+            NetworkStream stream = client.GetStream();
+            reader = new StreamReader(stream);
+            writer = new StreamWriter(stream);
+            writer.AutoFlush = true;
 
-            receiveThread = new Thread(ReceiveData);
+            isConnected = true;
+
+            Debug.Log("[Rede] Conectado ao servidor");
+
+            receiveThread = new Thread(ReceiveLoop);
+            receiveThread.IsBackground = true;
             receiveThread.Start();
         }
-        catch (Exception e)
+        catch
         {
-            Debug.LogError("[Cliente] Erro ao conectar: " + e.Message);
+            Debug.LogError("[Rede] Falha ao conectar");
         }
     }
-    #endregion
 
-    #region Comunicação (Enviar e Receber)
-    void ReceiveData()
+    void ReceiveLoop()
     {
-        byte[] buffer = new byte[4]; 
         while (client != null && client.Connected)
         {
             try
             {
-                int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                if (bytesRead > 0)
+                string msg = reader.ReadLine();
+                if (msg == null) continue;
+
+                Debug.Log("[Rede] Recebido: " + msg);
+
+                if (msg == "OPPONENT_JOINED")
+                    opponentConnected = true;
+
+                if (msg == "START_GAME")
                 {
-                    int col = BitConverter.ToInt32(buffer, 0);
-                    
-                    lock (this)
-                    {
-                        receivedColumn = col;
-                    }
+                    gameStarted = true;
+                    Debug.Log("[Rede] Jogo iniciado!");
                 }
-                else
+
+                if (msg.StartsWith("MOVE:"))
                 {
-                    // Se ler 0 bytes, o outro lado fechou a conexão de forma limpa
-                    break;
+                    int col = int.Parse(msg.Split(':')[1]);
+
+                    Connect4Manager.Instance?.ApplyOpponentMove(col);
                 }
             }
-            catch (Exception)
+            catch
             {
-                break;
+                Debug.LogWarning("[Rede] Erro na recepção");
             }
         }
     }
 
     public void SendMove(int column)
     {
-        if (stream == null || client == null || !client.Connected) 
+        if (!isConnected || !opponentConnected || !gameStarted)
         {
-            Debug.LogWarning("[Rede] Não enviado: Nenhum oponente conectado ainda.");
+            Debug.LogWarning("[Rede] Não enviado: jogo ainda não pronto.");
             return;
         }
 
         try
         {
-            byte[] data = BitConverter.GetBytes(column);
-            stream.Write(data, 0, data.Length);
-            Debug.Log($"[Rede] Coluna {column} enviada com sucesso.");
+            writer.WriteLine("MOVE:" + column);
         }
-        catch (Exception e)
+        catch
         {
-            Debug.LogError("[Rede] Erro ao enviar: " + e.Message);
-        }
-    }
-    #endregion
-
-    void Update()
-    {
-        lock (this)
-        {
-            if (receivedColumn != -1)
-            {
-                gameManager.TryPlacePiece(receivedColumn);
-                receivedColumn = -1; 
-            }
+            Debug.LogError("[Rede] Erro ao enviar jogada");
         }
     }
 
-    // CORREÇÃO DO ERRO DO CONSOLE: Fecha tudo de forma segura ao sair
     void OnApplicationQuit()
     {
-        // 1. Fecha o fluxo de dados e os sockets para interromper os bloqueios de leitura/escuta
-        if (stream != null) { stream.Close(); stream = null; }
-        if (client != null) { client.Close(); client = null; }
-        if (server != null) { server.Stop(); server = null; }
-
-        // 2. Aguarda o encerramento amigável das Threads em segundo plano
-        if (receiveThread != null && receiveThread.IsAlive)
-        {
-            receiveThread.Join(50); 
-        }
-        if (listenThread != null && listenThread.IsAlive)
-        {
-            listenThread.Join(50);
-        }
-        
-        Debug.Log("[Rede] Conexões encerradas com sucesso.");
+        client?.Close();
     }
 }
